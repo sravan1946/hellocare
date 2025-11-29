@@ -14,6 +14,9 @@ class AISummaryDisplay extends StatelessWidget {
     if (text.isEmpty) return text;
     // Use replaceAllMapped to properly handle capture groups
     String result = text;
+    // Remove code blocks first (including ```json ... ``` and ``` ... ```)
+    result = result.replaceAll(RegExp(r'```[a-zA-Z]*\n?[\s\S]*?```'), ''); // Code blocks with optional language identifier
+    result = result.replaceAll(RegExp(r'```[\s\S]*?```'), ''); // Code blocks without language identifier (fallback)
     result = result.replaceAllMapped(RegExp(r'\*\*([^*]+)\*\*'), (match) => match.group(1) ?? ''); // Bold **text**
     result = result.replaceAllMapped(RegExp(r'(?<!\*)\*([^*]+)\*(?!\*)'), (match) => match.group(1) ?? ''); // Italic *text* (not bold)
     result = result.replaceAllMapped(RegExp(r'__([^_]+)__'), (match) => match.group(1) ?? ''); // Bold __text__
@@ -21,9 +24,10 @@ class AISummaryDisplay extends StatelessWidget {
     result = result.replaceAllMapped(RegExp(r'#{1,6}\s+(.+)'), (match) => match.group(1) ?? ''); // Headers # text
     result = result.replaceAllMapped(RegExp(r'\[([^\]]+)\]\([^\)]+\)'), (match) => match.group(1) ?? ''); // Links [text](url)
     result = result.replaceAllMapped(RegExp(r'`([^`]+)`'), (match) => match.group(1) ?? ''); // Inline code `code`
-    result = result.replaceAll(RegExp(r'```[\s\S]*?```'), ''); // Code blocks
     result = result.replaceAll(RegExp(r'^\s*[-*+]\s+', multiLine: true), ''); // List items
     result = result.replaceAll(RegExp(r'^\s*\d+\.\s+', multiLine: true), ''); // Numbered lists
+    // Remove "(unstructured)" text if present
+    result = result.replaceAll(RegExp(r'\(unstructured\)', caseSensitive: false), '').trim();
     return result.trim();
   }
 
@@ -43,13 +47,20 @@ class AISummaryDisplay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Compute summary content before building widgets
+    final overallSummary = summaryData['overallSummary']?.toString() ?? '';
+    final strippedSummary = _stripMarkdown(overallSummary);
+    final hasSummaryContent = strippedSummary.isNotEmpty && strippedSummary.length > 3;
+    final hasCriticalSummary = summaryData['criticalSummary'] != null && 
+        summaryData['criticalSummary'].toString().isNotEmpty;
+    
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Priority and Overall Summary Section
-          if (summaryData['priorityEmoji'] != null || summaryData['overallSummary'] != null)
+          if (summaryData['priorityEmoji'] != null || hasSummaryContent || hasCriticalSummary)
             Card(
               margin: const EdgeInsets.only(bottom: 16),
               child: Padding(
@@ -76,11 +87,22 @@ class AISummaryDisplay extends StatelessWidget {
                           ),
                         ],
                       ),
-                    if (summaryData['overallSummary'] != null) ...[
-                      const SizedBox(height: 16),
+                    if (hasSummaryContent) ...[
+                      if (summaryData['priorityEmoji'] != null) const SizedBox(height: 16),
                       Text(
-                        _stripMarkdown(summaryData['overallSummary'].toString()),
+                        strippedSummary,
                         style: const TextStyle(fontSize: 16, height: 1.5),
+                      ),
+                    ] else if (summaryData['overallSummary'] != null && overallSummary.isNotEmpty) ...[
+                      // If summary exists but was stripped to nothing, show a message
+                      if (summaryData['priorityEmoji'] != null) const SizedBox(height: 16),
+                      Text(
+                        'Summary data is being processed. Please refresh to see the full summary.',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: AppTheme.grey,
+                          fontStyle: FontStyle.italic,
+                        ),
                       ),
                     ],
                     if (summaryData['criticalSummary'] != null && 

@@ -41,22 +41,90 @@ class _AISummaryPageState extends State<AISummaryPage> {
         // Process the data - handle both string and Map formats
         Map<String, dynamic> processedData;
         
-        if (data is String) {
-          // If data is a string, try to parse it as JSON
+        if (data is Map) {
+          // Check if there's a 'summary' field that contains markdown-wrapped JSON
+          if (data.containsKey('summary') && data['summary'] is String) {
+            String summaryString = data['summary'] as String;
+            print('Found summary field as string, extracting JSON...');
+            
+            // Remove markdown code blocks (```json ... ``` or ``` ... ```)
+            String cleanedData = summaryString;
+            final codeBlockPattern = RegExp(r'```[a-zA-Z]*\n?([\s\S]*?)```');
+            final match = codeBlockPattern.firstMatch(summaryString);
+            if (match != null) {
+              cleanedData = match.group(1)?.trim() ?? summaryString;
+              print('Extracted JSON from markdown code block');
+            }
+            
+            // Try to parse the JSON from the summary field
+            try {
+              final decoded = json.decode(cleanedData);
+              if (decoded is Map) {
+                processedData = Map<String, dynamic>.from(decoded);
+                // Merge with other fields from the response (like generatedAt, reportCount)
+                processedData.addAll({
+                  'generatedAt': data['generatedAt'],
+                  'reportCount': data['reportCount'],
+                  'lastReportDate': data['lastReportDate'],
+                });
+                print('Successfully parsed JSON from summary field');
+              } else {
+                processedData = {
+                  'overallSummary': cleanedData,
+                  'findings': [],
+                  'priorityEmoji': '✅',
+                  'generatedAt': data['generatedAt'],
+                  'reportCount': data['reportCount'],
+                };
+              }
+            } catch (e) {
+              print('Failed to parse JSON from summary field: $e');
+              // If it's not valid JSON, treat as plain text summary (strip markdown)
+              final strippedData = cleanedData
+                  .replaceAll(RegExp(r'```[\s\S]*?```'), '') // Remove any remaining code blocks
+                  .replaceAll(RegExp(r'`([^`]+)`'), r'$1') // Remove inline code
+                  .trim();
+              processedData = {
+                'overallSummary': strippedData,
+                'findings': [],
+                'priorityEmoji': '✅',
+                'generatedAt': data['generatedAt'],
+                'reportCount': data['reportCount'],
+              };
+            }
+          } else {
+            // No summary field, use the data map directly
+            processedData = Map<String, dynamic>.from(data);
+          }
+        } else if (data is String) {
+          // If data is a string, check if it contains markdown code blocks
+          String cleanedData = data;
+          
+          // Remove markdown code blocks (```json ... ``` or ``` ... ```)
+          final codeBlockPattern = RegExp(r'```[a-zA-Z]*\n?([\s\S]*?)```');
+          final match = codeBlockPattern.firstMatch(data);
+          if (match != null) {
+            cleanedData = match.group(1)?.trim() ?? data;
+            print('Extracted JSON from markdown code block');
+          }
+          
+          // Try to parse it as JSON
           try {
-            final decoded = json.decode(data);
-            processedData = decoded is Map ? Map<String, dynamic>.from(decoded) : {'overallSummary': data};
+            final decoded = json.decode(cleanedData);
+            processedData = decoded is Map ? Map<String, dynamic>.from(decoded) : {'overallSummary': cleanedData};
           } catch (e) {
             print('Failed to parse JSON string: $e');
-            // If it's not valid JSON, treat as plain text summary
+            // If it's not valid JSON, treat as plain text summary (strip markdown)
+            final strippedData = cleanedData
+                .replaceAll(RegExp(r'```[\s\S]*?```'), '') // Remove any remaining code blocks
+                .replaceAll(RegExp(r'`([^`]+)`'), r'$1') // Remove inline code
+                .trim();
             processedData = {
-              'overallSummary': data,
+              'overallSummary': strippedData,
               'findings': [],
               'priorityEmoji': '✅',
             };
           }
-        } else if (data is Map) {
-          processedData = Map<String, dynamic>.from(data);
         } else {
           print('Unexpected data type: ${data.runtimeType}');
           throw Exception('Unexpected data type: ${data.runtimeType}');
@@ -121,9 +189,26 @@ class _AISummaryPageState extends State<AISummaryPage> {
             _isLoading = false;
           });
         } else {
+          // Fallback: try to extract any meaningful data from the response
           print('Invalid response format - no findings or summary field');
+          print('Available keys in processedData: ${processedData.keys.toList()}');
+          
+          // Try to find any text content that might be a summary
+          String? fallbackSummary;
+          for (var key in processedData.keys) {
+            final value = processedData[key];
+            if (value is String && value.isNotEmpty && value.length > 20) {
+              fallbackSummary = value;
+              break;
+            }
+          }
+          
           setState(() {
-            _error = 'Invalid response format: Missing required fields';
+            _summaryData = {
+              'overallSummary': fallbackSummary ?? 'No summary data available. Please try refreshing.',
+              'findings': [],
+              'priorityEmoji': '✅',
+            };
             _isLoading = false;
           });
         }
